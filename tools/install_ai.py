@@ -24,9 +24,11 @@ MODELS = [
 ]
 
 
-def recommended(vram, ram):
+def recommended(vram, ram, small=False):
     """Самая умная из проверенных с Капри, которая будет отвечать быстро. qwen3:14b не советуем, пока
     не проверена, — но на мощных видеокартах она есть в списке."""
+    if small:
+        return "qwen3:1.7b"
     if vram >= 7.5:
         return "qwen3:8b"
     if vram >= 3.5 or ram >= 8:
@@ -34,12 +36,16 @@ def recommended(vram, ram):
     return "qwen3:1.7b"
 
 
-def suitable(vram, ram):
+def suitable(vram, ram, small=False):
     """[(модель, описание)] только тех, что потянет этот компьютер."""
     out = []
     for name, desc, tested, fits in MODELS:
-        if not fits(vram, ram):
-            continue
+        if small:
+            if not fits(vram//2, ram//2):
+                continue
+        else:
+            if not fits(vram, ram):
+                continue
         if name == "qwen3:8b" and vram < 7.5:
             desc += ", без видеокарты будет думать долго"
         if not tested:
@@ -96,14 +102,17 @@ def ram_gb():
         return 0
 
 
-def choose_model(vram=None, ram=None):
+def choose_model(vram=None, ram=None, small=False):
     vram = gpu_memory_gb() if vram is None else vram
     ram = ram_gb() if ram is None else ram
     say(f"[Capri] Видеокарта NVIDIA: {f'{vram:.0f} ГБ' if vram else 'нет'}, оперативная память: {ram:.0f} ГБ")
-    options = suitable(vram, ram)
-    best = recommended(vram, ram)
+    options = suitable(vram, ram,small)
+    best = recommended(vram, ram,small)
+    if small:
+        options.append(("Ничего", "Мне не нужна вторая модель"))
     say("[Capri] Модели, которые потянет этот компьютер:")
     for i, (name, desc) in enumerate(options, 1):
+        say(small)
         say(f"   {i} — {name}: {desc}{'   <- советую' if name == best else ''}")
     numbers = ", ".join(str(i) for i in range(1, len(options) + 1))
     choice = input(f"Нажми Enter (будет {best}) или введи номер ({numbers}): ").strip()
@@ -112,10 +121,10 @@ def choose_model(vram=None, ram=None):
     return best
 
 
-def save_model(name):
+def save_model(name, small =False):
     """Прописать модель в config.json, не трогая остальные настройки."""
     data = {}
-    if os.path.exists(CONFIG):
+    if os.path.exists(CONFIG) and small == False:
         try:
             with open(CONFIG, encoding="utf-8-sig") as f:
                 text = f.read()
@@ -134,27 +143,43 @@ def save_model(name):
 def main():
     exe = ollama_exe() or install_ollama()
     if not exe:
-        say("[Capri] Ollama так и не нашлась. Установи её с https://ollama.com/download и запусти setup_ai.bat ещё раз.")
-        return 1
+       say("[Capri] Ollama так и не нашлась. Установи её с https://ollama.com/download и запусти setup_ai.bat ещё раз.")
+       return 1
     if not server_up():
-        subprocess.Popen([exe, "serve"], creationflags=0x08000000)
-        for _ in range(30):
-            time.sleep(0.5)
-            if server_up():
-                break
+       subprocess.Popen([exe, "serve"], creationflags=0x08000000)
+       for _ in range(30):
+           time.sleep(0.5)
+           if server_up():
+               break
     if not server_up():
-        say("[Capri] Ollama не запускается. Открой её из меню «Пуск» и запусти setup_ai.bat ещё раз.")
-        return 1
+       say("[Capri] Ollama не запускается. Открой её из меню «Пуск» и запусти setup_ai.bat ещё раз.")
+       return 1
     model = choose_model()
     say(f"\n[Capri] Скачиваю {model}. Это несколько гигабайт, может занять время.")
     say("        Если загрузка не идёт — включи VPN и запусти setup_ai.bat ещё раз.\n")
     if subprocess.run([exe, "pull", model]).returncode != 0:
-        say("\n[Capri] Модель не скачалась. Проверь интернет (или включи VPN) и запусти setup_ai.bat ещё раз.")
-        return 1
+       say("\n[Capri] Модель не скачалась. Проверь интернет (или включи VPN) и запусти setup_ai.bat ещё раз.")
+       return 1
     if save_model(model):
-        say(f"\n[Capri] Готово! Модель {model} прописана в config.json.")
-    say("[Capri] Перезапусти Капри (значок в трее -> «Выход», затем run.bat) — и можно болтать.")
-    return 0
+        if model == "qwen3:4b-instruct" or model == "qwen3:1.7b":
+            say(f"\n[Capri] Готово! Модель {model} прописана в config.json.")
+            say("[Capri] Перезапусти Капри (значок в трее -> «Выход», затем run.bat) — и можно болтать.")
+            return 0
+        else:
+            say(f"Можешь выбрать модель попроще, чтобы она работала, в случае если твой компьютер под нагрузкой")
+            model = choose_model(small=True)
+            if model == 'Ничего':
+                say(f"\n[Capri] Готово! ИИ был установлен")
+                say("[Capri] Перезапусти Капри (значок в трее -> «Выход», затем run.bat) — и можно болтать.")
+                return 0
+            say(f"\n[Capri] Скачиваю {model}. Это несколько гигабайт, может занять время.")
+            if subprocess.run([exe, "pull", model]).returncode != 0:
+               say("\n[Capri] Модель не скачалась. Проверь интернет (или включи VPN) и запусти setup_ai.bat ещё раз.")
+               return 1
+            if save_model(model,small=True):
+                say(f"\n[Capri] Готово! Модель была установлена")
+                say("[Capri] Перезапусти Капри (значок в трее -> «Выход», затем run.bat) — и можно болтать.")
+            return 0
 
 
 if __name__ == "__main__":
